@@ -5,22 +5,24 @@ contract Auction {
 
     address public creator;
     uint256 public commission;
-    uint256 public lotNum;
+    uint256 public lotCount;
     uint256 public auctionRound;
     bool public auctionOngoing;
     uint256 public startTime;
     uint256 public endTime;
     bool public ended;
+    uint256 private constant MAX_EXTENSIONS = 2;
 
     struct Lot {
         uint256 id;
-        address seller;    git
+        address seller;
         address maxPriceBidder;
         uint256 reservePrice;
         uint256 maxPrice;
         string desc;
         uint256 roundEndTime;
         bool ended;
+        uint256 extensionCount;
     }
 
     mapping(uint256 => Lot) public catalogue;    
@@ -40,7 +42,7 @@ contract Auction {
         commission = _commission;
         startTime = _startTime;
         ended = false;
-        lotNum = 0;
+        lotCount = 0;
         auctionRound = 0;
         auctionOngoing = false;
         emit CreateAuction(msg.sender, _commission, _startTime);
@@ -52,18 +54,19 @@ contract Auction {
         require(_reservePrice > commission, "reserve price need > commission");
         require(ended != true, "the auction is ended");
        
-        uint256 oldNum = lotNum;
-        catalogue[lotNum] = Lot({
-            id: lotNum,
+        uint256 oldNum = lotCount;
+        catalogue[lotCount] = Lot({
+            id: lotCount,
             seller: msg.sender,
             maxPriceBidder: address(0),
             reservePrice: _reservePrice,
             maxPrice: 0, 
             desc: _desc,
             roundEndTime: 0,
-            ended: false
+            ended: false,
+            extensionCount: 0
         });
-        lotNum++;
+        lotCount++;
         emit ListedForSale(msg.sender, oldNum, _reservePrice);
     }
 
@@ -91,6 +94,12 @@ contract Auction {
             pendingReturns[auctionRound][msg.sender] += msg.value;
         }
 
+        uint256 currentTime = block.timestamp;
+        if (currentTime <= currentLot.roundEndTime && currentTime >= (currentLot.roundEndTime - 3 minutes) && currentLot.extensionCount < MAX_EXTENSIONS) {
+            catalogue[auctionRound].roundEndTime += 3;
+            currentLot.extensionCount++;
+        }
+
         currentLot.maxPriceBidder = msg.sender;
         currentLot.maxPrice = msg.value;
         emit MaxPriceIncreased(auctionRound, msg.sender, msg.value);
@@ -112,7 +121,7 @@ contract Auction {
         emit EndRound(auctionRound, currentLot.maxPriceBidder, currentLot.maxPrice);
         payable(currentLot.seller).transfer(currentLot.maxPrice - commission);
         payable(creator).transfer(commission);
-        if(lotNum == auctionRound) {
+        if(lotCount == auctionRound) {
             ended = true;
             endTime = block.timestamp;
             emit EndAuction(msg.sender, endTime);
