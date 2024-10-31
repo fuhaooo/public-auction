@@ -2,7 +2,6 @@
 pragma solidity ^0.8.20;
 
 contract Auction {
-
     address public creator;
     uint256 public commission;
     uint256 public lotCount;
@@ -86,7 +85,7 @@ contract Auction {
 
     function bid() public payable{
         Lot storage currentLot = catalogue[auctionRound];
-        require(block.timestamp < currentLot.roundEndTime, "auction round already ended");
+        require(true == currentLot.ended, "auction round already ended");
         require(msg.value >= currentLot.reservePrice, "bid need >= reserve price");
         require(msg.value > currentLot.maxPrice, "bid need > max price");
         
@@ -126,6 +125,19 @@ contract Auction {
             endTime = block.timestamp;
             emit EndAuction(msg.sender, endTime);
         }
+    }
+
+    function getAllLots() external view returns (Lot[] memory) {
+        Lot[] memory lots = new Lot[](lotCount);
+        for (uint256 i = 0; i < lotCount; i++) {
+            lots[i] = catalogue[i];
+        }
+        return lots;
+    }
+
+    function getCurrentLotDetails() external view returns (Lot memory) {
+        require(auctionRound >= 0, "No lots available for current round");
+        return catalogue[auctionRound];
     }
 
 
