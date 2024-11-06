@@ -44,6 +44,7 @@ contract Auction {
         uint256 maxPrice
     );
     event EndAuction(address creator, uint256 endTime);
+    event PendingRefund(address bidder, uint256 amount);
 
     constructor() payable {}
 
@@ -190,19 +191,6 @@ contract Auction {
         // Then transfer to the creator
         (bool sentToCreator, ) = payable(creator).call{value: commission}("");
         require(sentToCreator, "Failed to send commission to creator");
-
-        // Refund any pending returns to the bidders who have not withdrawn
-        for (uint256 i = 0; i < lotCount; i++) {
-            address bidder = catalogue[i].maxPriceBidder;
-            uint256 amountToRefund = pendingReturns[auctionRound][bidder];
-            if (amountToRefund > 0) {
-                pendingReturns[auctionRound][bidder] = 0;
-                (bool refunded, ) = payable(bidder).call{value: amountToRefund}(
-                    ""
-                );
-                require(refunded, "Failed to refund bidder");
-            }
-        }
 
         // If it's the last lot, end the auction
         if (lotCount == auctionRound) {

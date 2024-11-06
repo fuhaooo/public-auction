@@ -5,158 +5,102 @@ import "forge-std/Test.sol";
 import "../src/Auction.sol";
 
 contract AuctionTest is Test {
-    Auction auction;
-    address creator;
-    address seller;
-    address bidder1;
-    address bidder2;
+    Auction public auction;
+    address public creator = address(0xABCD);
+    address public seller = address(0xBEEF);
+    address public bidder1 = address(0xCAFE);
+    address public bidder2 = address(0xDEAD);
 
     function setUp() public {
+        vm.startPrank(creator);
         auction = new Auction();
-        creator = address(this);
-        seller = address(0x1);
-        bidder1 = address(0x2);
-        bidder2 = address(0x3);
+        auction.createAuction(1 ether); // 设置佣金为1 ether
+        vm.stopPrank();
     }
 
     function testCreateAuction() public {
-        auction.createAuction(0.1 ether, block.timestamp + 1 hours);
         assertEq(auction.creator(), creator);
-        assertEq(auction.commission(), 0.1 ether);
-        assertTrue(auction.startTime() > block.timestamp);
-        assertEq(auction.lotCount(), 0);
-        assertFalse(auction.ended());
+        assertEq(auction.commission(), 1 ether);
+        assertEq(auction.ended(), false);
     }
 
-    function testListedForSale() public {
-        auction.createAuction(0.1 ether, block.timestamp + 1 hours);
-        vm.prank(seller);
-        auction.listedForSale(0.2 ether, "Test Lot");
+    function testListForSale() public {
+        vm.startPrank(seller);
+        auction.listedForSale(2 ether, "Lot #1");
+        vm.stopPrank();
 
-        (
-            uint256 id,
-            address sellerAddr,
-            address maxBidder,
-            uint256 reservePrice,
-            uint256 maxPrice,
-            string memory desc,
-            uint256 roundEndTime,
-            bool ended,
-            uint256 extensionCount
-        ) = auction.catalogue(0);
-
-        // 进行断言
+        (uint256 id, address lotSeller, , uint256 reservePrice, , string memory desc, , , ) = auction.catalogue(0);
         assertEq(id, 0);
-        assertEq(sellerAddr, seller);
-        assertEq(reservePrice, 0.2 ether);
-        assertFalse(ended);
-        assertEq(auction.lotCount(), 1);
+        assertEq(lotSeller, seller);
+        assertEq(reservePrice, 2 ether);
+        assertEq(desc, "Lot #1");
     }
 
-    function testStartNewRound() public {
-        auction.createAuction(0.1 ether, block.timestamp + 1 hours);
-        vm.prank(seller);
-        auction.listedForSale(0.2 ether, "Test Lot");
-
-        vm.warp(block.timestamp + 1 hours);
-        vm.prank(creator);
-
-        // 检查 lotCount 是否正确增加
-        assertEq(
-            auction.lotCount(),
-            1,
-            "Lot count should be 1 after listing for sale"
-        );
-
-        auction.startNewRound(10 minutes);
-
-        // 检查轮次状态
-        assertTrue(auction.auctionOngoing());
-
-        (
-            uint256 id,
-            address sellerAddr,
-            address maxBidder,
-            uint256 reservePrice,
-            uint256 maxPrice,
-            string memory desc,
-            uint256 roundEndTime,
-            bool ended,
-            uint256 extensionCount
-        ) = auction.catalogue(0);
-
-        assertTrue(roundEndTime > block.timestamp);
+    function testStartFirstRound() public {
+        testListForSale();
+        
+        vm.startPrank(creator);
+        auction.startFirstRound(1 hours);
+        vm.stopPrank();
+        
+        (, , , , , , uint256 roundEndTime, bool ended, ) = auction.catalogue(0);
+        assertEq(auction.auctionRound(), 0);
+        assertEq(auction.auctionOngoing(), true);
+        assertEq(ended, false);
+        assertGt(roundEndTime, block.timestamp);
     }
 
     function testBid() public {
-        auction.createAuction(0.1 ether, block.timestamp + 1 hours);
-        vm.prank(seller);
-        auction.listedForSale(0.2 ether, "Test Lot");
+        testStartFirstRound();
 
-        vm.warp(block.timestamp + 1 hours);
-        vm.prank(creator);
-        auction.startNewRound(10 minutes);
+        vm.deal(bidder1, 3 ether);
+        vm.startPrank(bidder1);
+        auction.bid{value: 3 ether}();
+        vm.stopPrank();
 
-        vm.deal(bidder1, 0.5 ether);
-        vm.prank(bidder1);
-        auction.bid{value: 0.3 ether}();
+        (, , address maxPriceBidder, , uint256 maxPrice, , , , ) = auction.catalogue(0);
+        assertEq(maxPriceBidder, bidder1);
+        assertEq(maxPrice, 3 ether);
+    }
 
-        (
-            uint256 id,
-            address sellerAddr,
-            address maxBidder,
-            uint256 reservePrice,
-            uint256 maxPrice,
-            string memory desc,
-            uint256 roundEndTime,
-            bool ended,
-            uint256 extensionCount
-        ) = auction.catalogue(0);
-        assertEq(maxBidder, bidder1, "Max bidder should be bidder1");
-        assertEq(maxPrice, 0.3 ether, "Max price should be 0.3 ether");
+    function testEndRound() public {
+        testBid();
+
+        vm.deal(bidder2, 4 ether);
+        vm.startPrank(bidder2);
+        auction.bid{value: 4 ether}();
+        vm.stopPrank();
+
+        // End round and verify funds distribution
+        vm.startPrank(creator);
+        auction.endRound();
+        vm.stopPrank();
+
+        (, , , , , , , bool ended, ) = auction.catalogue(0);
+        assertEq(ended, true);
+        assertEq(auction.auctionOngoing(), false);
+
+        uint256 sellerBalance = address(seller).balance;
+        uint256 creatorBalance = address(creator).balance;
+        assertEq(sellerBalance, 3 ether); // 确认卖家收到扣除佣金的最高出价
+        assertEq(creatorBalance, 1 ether); // 确认拍卖创建者收到佣金
     }
 
     function testWithdraw() public {
-        auction.createAuction(0.1 ether, block.timestamp + 1 hours);
-        vm.prank(seller);
-        auction.listedForSale(0.2 ether, "Test Lot");
+        testBid();
 
-        vm.warp(block.timestamp + 1 hours);
-        vm.prank(creator);
-        auction.startNewRound(10 minutes);
+        vm.deal(bidder2, 5 ether);
+        vm.startPrank(bidder2);
+        auction.bid{value: 5 ether}();
+        vm.stopPrank();
 
-        // 添加资金给竞标者
-        vm.deal(bidder1, 0.5 ether);
-        vm.prank(bidder1);
-        auction.bid{value: 0.3 ether}();
+        // Ensure that bidder1 can withdraw funds
+        uint256 initialBalance = bidder1.balance;
 
-        vm.prank(creator);
-        auction.endRound();
-
-        uint256 withdrawAmount = auction.pendingReturns(0, bidder1);
-        assertEq(withdrawAmount, 0, "Withdraw amount should be zero");
-
-        vm.prank(bidder1);
+        vm.startPrank(bidder1);
         auction.withdraw();
-    }
+        vm.stopPrank();
 
-    function testEndAuction() public {
-        auction.createAuction(0.1 ether, block.timestamp + 1 hours);
-        vm.prank(seller);
-        auction.listedForSale(0.2 ether, "Test Lot");
-
-        vm.warp(block.timestamp + 1 hours);
-        vm.prank(creator);
-        auction.startNewRound(10 minutes);
-
-        vm.deal(bidder1, 0.5 ether);
-        vm.prank(bidder1);
-        auction.bid{value: 0.3 ether}();
-
-        vm.prank(creator);
-        auction.endRound();
-
-        assertTrue(auction.ended(), "Auction should be ended");
-        assertTrue(auction.endTime() > 0, "End time should be set");
+        assertEq(bidder1.balance, initialBalance + 3 ether);
     }
 }
